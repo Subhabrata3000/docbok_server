@@ -1,38 +1,43 @@
 // firebaseAdmin.js
 const admin = require('firebase-admin');
+require('dotenv').config(); // Make sure dotenv is at the top
 
-// This line reads the key file you just added
-const serviceAccount = require('./serviceAccountKey.json');
+// 1. Build the credential object from environment variables
+const serviceAccount = {
+  type: "service_account",
+  project_id: process.env.FIREBASE_PROJECT_ID,
+  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+  // 2. Fix the private key format (it comes as a string)
+  private_key: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  client_email: process.env.FIREBASE_CLIENT_EMAIL,
+  client_id: process.env.FIREBASE_CLIENT_ID,
+  auth_uri: "https://accounts.google.com/o/oauth2/auth",
+  token_uri: "https://oauth2.googleapis.com/token",
+  auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+  client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL
+};
 
-// Initialize the Firebase app
+// 3. Initialize Firebase with the object
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 
-/**
- * A helper function to send a push notification.
- * @param {string} fcmToken - The device token of the user to send to.
- * @param {string} title - The title of the notification.
- * @param {string} body - The main text of the notification.
- */
+// This helper function is unchanged
 const sendPushNotification = async (fcmToken, title, body) => {
-  // Check if a token was provided
   if (!fcmToken) {
     console.log('No FCM token provided for user. Skipping notification.');
     return;
   }
 
-  // This is the notification payload
   const message = {
     notification: {
-      title: title, // e.g., "Appointment Confirmed!"
-      body: body,   // e.g., "Dr. Smith has confirmed your appointment."
+      title: title,
+      body: body,
     },
-    token: fcmToken, // The specific device to send to
+    token: fcmToken,
   };
 
   try {
-    // Send the message using the Firebase Admin SDK
     const response = await admin.messaging().send(message);
     console.log('Successfully sent message:', response);
   } catch (error) {
@@ -40,5 +45,4 @@ const sendPushNotification = async (fcmToken, title, body) => {
   }
 };
 
-// Export the function so we can use it in index.js
-module.exports = { sendPushNotification };
+module.exports = { admin, sendPushNotification };
