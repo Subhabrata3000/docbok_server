@@ -17,7 +17,8 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['patient', 'doctor'],
+    // --- THIS IS THE UPDATE ---
+    enum: ['patient', 'doctor', 'admin'], // Added 'admin'
     required: true,
   },
   fcm_token: {
@@ -25,8 +26,7 @@ const UserSchema = new mongoose.Schema({
   },
   
   // ==========================================================
-  // ===           THIS IS THE CRITICAL NEW CODE          ===
-  // ===    Your database needs to know about these fields  ===
+  // ===           DOCTOR-SPECIFIC FIELDS           ===
   // ==========================================================
   specialty: {
     type: String,

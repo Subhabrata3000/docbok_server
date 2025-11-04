@@ -7,7 +7,7 @@ const connectDB = require('./db');
 const { sendPushNotification } = require('./firebaseAdmin');
 require('dotenv').config();
 
-const User = require('./models/User');
+const User = require('./models/User'); // This now has the 'admin' role
 const Appointment = require('./models/Appointment');
 
 const app = express();
@@ -15,6 +15,18 @@ const PORT = process.env.PORT || 3000;
 
 connectDB();
 app.use(express.json());
+
+// ==========================================================
+// ===         NEW MIDDLEWARE FOR ADMIN-ONLY ROUTES       ===
+// ==========================================================
+const adminAuth = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ msg: 'Access denied. Admin-only route.' });
+  }
+  next();
+};
+// ==========================================================
+
 
 /*
  * @route   POST /api/register
@@ -27,6 +39,11 @@ app.post('/api/register', async (req, res) => {
       specialty, qualifications, experience,
       location, phoneNumber, consultationFee, availability 
     } = req.body;
+
+    // --- Prevent anyone from registering as 'admin' ---
+    if (role === 'admin') {
+      return res.status(400).json({ msg: 'Cannot register as admin.' });
+    }
 
     if (!email || !password || !full_name || !role) {
       return res.status(400).json({ msg: 'Please enter all required fields' });
@@ -128,41 +145,31 @@ app.get('/api/doctors', auth, async (req, res) => {
 });
 
 
-// ==========================================================
-// ===         NEW ENDPOINT FOR SMART BOOKING           ===
-// ==========================================================
 /*
  * @route   GET /api/doctor-availability/:id
- * @desc    Get a doctor's schedule and already booked appointments
- * @access  Private (for patients)
+ * (Unchanged)
  */
 app.get('/api/doctor-availability/:id', auth, async (req, res) => {
   try {
     const doctorId = req.params.id;
     
-    // 1. Get the doctor's weekly availability schedule
     const doctor = await User.findById(doctorId).select('availability');
     if (!doctor || !doctor.availability) {
       return res.status(404).json({ msg: 'Doctor or availability not found.' });
     }
     
-    // Parse the JSON string into an object
     const weeklySchedule = JSON.parse(doctor.availability);
 
-    // 2. Get all future confirmed appointments for this doctor
-    // This is the key: we check for 'confirmed' OR 'pending'
-    // A smart patient shouldn't be able to double-book a pending slot
     const now = new Date();
     const bookedSlots = await Appointment.find({
       doctor: doctorId,
-      status: { $in: ['confirmed', 'pending'] }, // Check for confirmed OR pending
-      appointment_time: { $gte: now } // Only in the future
-    }).select('appointment_time'); // We only need the time
+      status: { $in: ['confirmed', 'pending'] },
+      appointment_time: { $gte: now }
+    }).select('appointment_time'); 
 
-    // 3. Send both back to the app
     res.json({
       weeklySchedule: weeklySchedule,
-      bookedSlots: bookedSlots.map(slot => slot.appointment_time), // Send as a simple array of dates
+      bookedSlots: bookedSlots.map(slot => slot.appointment_time),
     });
 
   } catch (err) {
@@ -170,7 +177,6 @@ app.get('/api/doctor-availability/:id', auth, async (req, res) => {
     res.status(500).send('Server Error');
   }
 });
-// ==========================================================
 
 
 /*
@@ -421,9 +427,49 @@ app.put('/api/appointments/reject/:id', auth, async (req, res) => {
   }
 });
 
+
+// ==========================================================
+// ===          NEW ADMIN-ONLY "GOD VIEW" ROUTES          ===
+// ==========================================================
+
+/*
+ * @route   GET /api/admin/all-users
+ * @desc    Get a list of ALL users (patients and doctors)
+ * @access  Private (Admin-only)
+ */
+app.get('/api/admin/all-users', [auth, adminAuth], async (req, res) => {
+  try {
+    // Find all users, but remove their passwords from the response
+    const users = await User.find().select('-password');
+    res.json(users);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+/*
+ * @route   GET /api/admin/all-appointments
+ * @desc    Get a list of ALL appointments in the system
+ * @access  Private (Admin-only)
+ */
+app.get('/api/admin/all-appointments', [auth, adminAuth], async (req, res) => {
+  try {
+    // Find all appointments and populate both patient and doctor names
+    const appointments = await Appointment.find()
+      .populate('patient', 'full_name email')
+      .populate('doctor', 'full_name email')
+      .sort({ appointment_time: 'desc' });
+    res.json(appointments);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+// ==========================================================
+
+
 // === Start the server ===
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
