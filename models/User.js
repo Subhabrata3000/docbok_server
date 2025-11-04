@@ -9,7 +9,7 @@ const UserSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true, // Ensures no two users have the same email
+    unique: true,
   },
   password: {
     type: String,
@@ -17,22 +17,40 @@ const UserSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['patient', 'doctor'], // Role must be one of these
+    enum: ['patient', 'doctor'],
     required: true,
   },
-  fcm_token: { // For push notifications
+  fcm_token: {
     type: String, 
   },
-  // === Doctor-Specific Fields ===
+  
+  // ==========================================================
+  // ===           THIS IS THE CRITICAL NEW CODE          ===
+  // ===    Your database needs to know about these fields  ===
+  // ==========================================================
   specialty: {
     type: String,
-    default: 'General Practice',
   },
-  bio: {
+  qualifications: {
     type: String,
-    default: '',
-  }
+  },
+  experience: {
+    type: Number, // Storing years as a number
+  },
+  location: {
+    type: String,
+  },
+  phoneNumber: {
+    type: String,
+  },
+  consultationFee: {
+    type: Number,
+  },
+  // We will store the availability as a JSON string
+  availability: {
+    type: String,
+  },
+  // ==========================================================
 });
 
-// This line is the most important part!
 module.exports = mongoose.model('User', UserSchema);
