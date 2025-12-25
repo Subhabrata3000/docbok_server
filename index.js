@@ -131,6 +131,61 @@ app.post('/api/login', async (req, res) => {
 });
 
 /*
+ * @route   POST /api/auth/firebase-login
+ * @desc    Login or Register a user verified by Firebase Phone Auth
+ */
+app.post('/api/auth/firebase-login', async (req, res) => {
+  const { phoneNumber, full_name } = req.body;
+
+  if (!phoneNumber) {
+    return res.status(400).json({ msg: 'Phone number is required' });
+  }
+
+  try {
+    // 1. Check if user exists by Phone Number
+    let user = await User.findOne({ phoneNumber });
+
+    // 2. If user DOES NOT exist, Register them automatically
+    if (!user) {
+      if (!full_name) {
+        // If frontend didn't send a name, ask for it (status 202 means "Accepted but incomplete")
+        return res.status(202).json({ msg: 'New user. Please provide full name.' });
+      }
+
+      // Create new Patient
+      user = new User({
+        phoneNumber,
+        full_name,
+        role: 'patient' // Default role for phone auth is always patient
+      });
+      await user.save();
+    }
+
+    // 3. Login Logic (Generate JWT)
+    const payload = {
+      user: { id: user._id, role: user.role },
+    };
+
+    jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
+      if (err) throw err;
+      res.json({
+        token,
+        user: {
+          id: user._id,
+          full_name: user.full_name,
+          email: user.email, // Might be null now, which is okay
+          role: user.role,
+        },
+      });
+    });
+
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+/*
  * @route   GET /api/doctors
  * (Unchanged)
  */
@@ -178,7 +233,6 @@ app.get('/api/doctor-availability/:id', auth, async (req, res) => {
   }
 });
 
-
 /*
  * @route   POST /api/appointments/book
  * (Unchanged)
@@ -220,7 +274,7 @@ app.get('/api/my-appointments', auth, async (req, res) => {
   }
   try {
     const appointments = await Appointment.find({ patient: req.user.id })
-      .populate('doctor', 'full_name specialty')
+      .populate('doctor', 'full_name specialty location consultationFee')
       .sort({ appointment_time: -1 });
     res.json(appointments);
   } catch (err) {
