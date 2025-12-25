@@ -274,7 +274,7 @@ app.get('/api/my-appointments', auth, async (req, res) => {
   }
   try {
     const appointments = await Appointment.find({ patient: req.user.id })
-      .populate('doctor', 'full_name specialty location consultationFee')
+      .populate('doctor', 'full_name specialty location experience consultationFee')
       .sort({ appointment_time: -1 });
     res.json(appointments);
   } catch (err) {
