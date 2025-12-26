@@ -1,14 +1,14 @@
 // index.js
 const express = require('express');
-const cors = require('cors'); // Ensure you have installed: npm install cors
+const cors = require('cors'); 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const connectDB = require('./db');
 const path = require('path');
 const fs = require('fs');
-const multer = require('multer'); // Ensure you have installed: npm install multer
-const auth = require('./middleware/auth'); // Keep your auth middleware file
-const { sendPushNotification } = require('./firebaseAdmin'); // Keep your firebase logic
+const multer = require('multer'); 
+const auth = require('./middleware/auth'); 
+const { sendPushNotification } = require('./firebaseAdmin'); 
 require('dotenv').config();
 
 // Models
@@ -17,7 +17,7 @@ const Appointment = require('./models/Appointment');
 
 // Initialize App
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000; // Keep 5000 to match local testing if needed
 
 // Connect Database
 connectDB();
@@ -27,13 +27,11 @@ app.use(cors());
 app.use(express.json());
 
 // Serve Uploaded Images Publicly
-// Access via: http://YOUR_IP:3000/uploads/filename.png
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ==========================================================
 // ===              MULTER CONFIGURATION                  ===
 // ==========================================================
-// Ensure upload directory exists
 const uploadDir = 'uploads/';
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
@@ -44,19 +42,18 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: function (req, file, cb) {
-        // Unique filename: fieldname-timestamp.ext
         cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
     }
 });
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    limits: { fileSize: 5 * 1024 * 1024 }, 
 });
 
-// Helper: Get Full Image URL
 const getImageUrl = (req, filename) => {
     if (!filename) return null;
+    // Note: On Render, this will point to the cloud URL automatically
     return `${req.protocol}://${req.get('host')}/uploads/${filename}`;
 };
 
@@ -74,10 +71,7 @@ const adminAuth = (req, res, next) => {
 // ===              AUTH ROUTES                           ===
 // ==========================================================
 
-/*
- * @route   POST /api/auth/register
- * @desc    Register a new user (Patient or Doctor with Image)
- */
+// POST /api/auth/register
 app.post('/api/auth/register', upload.single('profile_image'), async (req, res) => {
   try {
     let { 
@@ -86,8 +80,6 @@ app.post('/api/auth/register', upload.single('profile_image'), async (req, res) 
       location, phoneNumber, consultationFee, availability 
     } = req.body;
 
-    // --- 1. Parsing Logic for Multipart Requests ---
-    // When sending images, data comes as strings. We must parse arrays/numbers.
     if (role === 'doctor') {
         if (typeof availability === 'string') availability = JSON.parse(availability);
         if (typeof experience === 'string') experience = parseInt(experience);
@@ -105,7 +97,6 @@ app.post('/api/auth/register', upload.single('profile_image'), async (req, res) 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Handle Image
     let profileImageUrl = null;
     if (req.file) {
         profileImageUrl = getImageUrl(req, req.file.filename);
@@ -122,13 +113,12 @@ app.post('/api/auth/register', upload.single('profile_image'), async (req, res) 
       newUserFields.experience = experience;
       newUserFields.location = location;
       newUserFields.consultationFee = consultationFee;
-      newUserFields.availability = JSON.stringify(availability); // Store as string or object depending on your Schema
+      newUserFields.availability = JSON.stringify(availability);
     }
 
     user = new User(newUserFields);
     await user.save();
 
-    // Generate Token
     const payload = { user: { id: user._id, role: user.role } };
     jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
       if (err) throw err;
@@ -141,9 +131,7 @@ app.post('/api/auth/register', upload.single('profile_image'), async (req, res) 
   }
 });
 
-/*
- * @route   POST /api/auth/login
- */
+// POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -166,10 +154,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-/*
- * @route   GET /api/auth/profile
- * @desc    Get current user details
- */
+// GET /api/auth/profile
 app.get('/api/auth/profile', auth, async (req, res) => {
     try {
         const user = await User.findById(req.user.id).select('-password');
@@ -179,10 +164,7 @@ app.get('/api/auth/profile', auth, async (req, res) => {
     }
 });
 
-/*
- * @route   PUT /api/auth/profile
- * @desc    Update Profile (Image + Text)
- */
+// PUT /api/auth/profile
 app.put('/api/auth/profile', auth, upload.single('profile_image'), async (req, res) => {
     try {
         const { full_name, phoneNumber, password } = req.body;
@@ -227,7 +209,6 @@ app.get('/api/doctors/:id/availability', auth, async (req, res) => {
     const doctor = await User.findById(req.params.id).select('availability');
     if (!doctor || !doctor.availability) return res.status(404).json({ msg: 'Not found' });
     
-    // Parse availability string to object
     let weeklySchedule = doctor.availability;
     if (typeof weeklySchedule === 'string') weeklySchedule = JSON.parse(weeklySchedule);
 
@@ -248,18 +229,15 @@ app.get('/api/doctors/:id/availability', auth, async (req, res) => {
 // ===              APPOINTMENT ROUTES                    ===
 // ==========================================================
 
-/*
- * @route   POST /api/appointments
- * @desc    Book Appointment (Matches Flutter: bookAppointment)
- */
+// POST /api/appointments (Book)
 app.post('/api/appointments', auth, async (req, res) => {
   if (req.user.role !== 'patient') return res.status(403).json({ msg: 'Patients only' });
   
   try {
-    const { doctorId, appointmentTime } = req.body; // Note: Flutter sends 'doctorId' (camelCase)
+    // Note: Flutter sends 'doctorId' and 'appointmentTime'
+    const { doctorId, appointmentTime } = req.body; 
     if (!doctorId || !appointmentTime) return res.status(400).json({ msg: 'Missing data' });
 
-    // Double Booking Check
     const exists = await Appointment.findOne({
       doctor: doctorId,
       appointment_time: appointmentTime,
@@ -283,9 +261,7 @@ app.post('/api/appointments', auth, async (req, res) => {
   }
 });
 
-/*
- * @route   GET /api/appointments/my-appointments
- */
+// GET /api/appointments/my-appointments
 app.get('/api/appointments/my-appointments', auth, async (req, res) => {
   try {
     const appts = await Appointment.find({ patient: req.user.id })
@@ -297,9 +273,7 @@ app.get('/api/appointments/my-appointments', auth, async (req, res) => {
   }
 });
 
-/*
- * @route   GET /api/appointments/doctor-schedule
- */
+// GET /api/appointments/doctor-schedule
 app.get('/api/appointments/doctor-schedule', auth, async (req, res) => {
   if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
@@ -312,10 +286,54 @@ app.get('/api/appointments/doctor-schedule', auth, async (req, res) => {
   }
 });
 
-/*
- * @route   PUT /api/appointments/:id/status
- * @desc    Accept/Reject Appointment
- */
+// GET /api/appointments/requests (Doctor Pending Requests)
+app.get('/api/appointments/requests', auth, async (req, res) => {
+  if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
+  try {
+    const requests = await Appointment.find({ 
+      doctor: req.user.id, 
+      status: 'pending' 
+    })
+    .populate('patient', 'full_name profile_image')
+    .sort({ appointment_time: 'asc' });
+    res.json(requests);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// GET /api/doctor/dashboard-stats
+app.get('/api/doctor/dashboard-stats', auth, async (req, res) => {
+  if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
+  try {
+    const doctor_id = req.user.id;
+    const pendingCount = await Appointment.countDocuments({
+      doctor: doctor_id,
+      status: 'pending',
+    });
+    
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    
+    const todaysAppointments = await Appointment.find({
+      doctor: doctor_id,
+      status: 'confirmed',
+      appointment_time: { $gte: startOfDay, $lt: endOfDay },
+    }).populate('patient', 'full_name');
+
+    res.json({
+      pendingCount: pendingCount,
+      todaysCount: todaysAppointments.length,
+      todaysAppointments: todaysAppointments,
+    });
+  } catch (err) {
+    res.status(500).send('Server Error');
+  }
+});
+
+// PUT /api/appointments/:id/status (Accept/Reject)
 app.put('/api/appointments/:id/status', auth, async (req, res) => {
   if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
@@ -328,7 +346,7 @@ app.put('/api/appointments/:id/status', auth, async (req, res) => {
     
     if (!appt) return res.status(404).json({ msg: 'Appointment not found' });
 
-    // --- PUSH NOTIFICATION LOGIC ---
+    // Push Notifications
     try {
         const patient = await User.findById(appt.patient);
         if (patient && patient.fcm_token) {
