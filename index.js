@@ -261,6 +261,20 @@ app.post('/api/appointments', auth, async (req, res) => {
   }
 });
 
+/*
+ * @route   POST /api/users/save-fcm-token
+ */
+app.post('/api/users/save-fcm-token', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    await User.findByIdAndUpdate(req.user.id, { fcm_token: token });
+    res.json({ msg: 'Token saved' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server Error');
+  }
+});
+
 // GET /api/appointments/my-appointments
 app.get('/api/appointments/my-appointments', auth, async (req, res) => {
   try {
