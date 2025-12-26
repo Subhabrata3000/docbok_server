@@ -1,14 +1,14 @@
 // index.js
 const express = require('express');
-const cors = require('cors'); 
+const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const connectDB = require('./db');
 const path = require('path');
 const fs = require('fs');
-const multer = require('multer'); 
-const auth = require('./middleware/auth'); 
-const { sendPushNotification } = require('./firebaseAdmin'); 
+const multer = require('multer');
+const auth = require('./middleware/auth');
+const { sendPushNotification } = require('./firebaseAdmin'); // Ensure this file exists
 require('dotenv').config();
 
 // Models
@@ -17,7 +17,7 @@ const Appointment = require('./models/Appointment');
 
 // Initialize App
 const app = express();
-const PORT = process.env.PORT || 5000; // Keep 5000 to match local testing if needed
+const PORT = process.env.PORT || 5000;
 
 // Connect Database
 connectDB();
@@ -48,12 +48,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, 
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
 const getImageUrl = (req, filename) => {
     if (!filename) return null;
-    // Note: On Render, this will point to the cloud URL automatically
     return `${req.protocol}://${req.get('host')}/uploads/${filename}`;
 };
 
@@ -192,6 +191,24 @@ app.put('/api/auth/profile', auth, upload.single('profile_image'), async (req, r
 });
 
 // ==========================================================
+// ===              USER / NOTIFICATION ROUTES            ===
+// ==========================================================
+
+// POST /api/users/save-fcm-token
+app.post('/api/users/save-fcm-token', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ msg: 'No token provided' });
+    
+    await User.findByIdAndUpdate(req.user.id, { fcm_token: token });
+    res.json({ msg: 'Token saved' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// ==========================================================
 // ===              DOCTOR ROUTES                         ===
 // ==========================================================
 
@@ -234,7 +251,6 @@ app.post('/api/appointments', auth, async (req, res) => {
   if (req.user.role !== 'patient') return res.status(403).json({ msg: 'Patients only' });
   
   try {
-    // Note: Flutter sends 'doctorId' and 'appointmentTime'
     const { doctorId, appointmentTime } = req.body; 
     if (!doctorId || !appointmentTime) return res.status(400).json({ msg: 'Missing data' });
 
@@ -255,20 +271,6 @@ app.post('/api/appointments', auth, async (req, res) => {
 
     await newAppt.save();
     res.status(201).json({ msg: 'Booked', appointment: newAppt });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
-  }
-});
-
-/*
- * @route   POST /api/users/save-fcm-token
- */
-app.post('/api/users/save-fcm-token', auth, async (req, res) => {
-  try {
-    const { token } = req.body;
-    await User.findByIdAndUpdate(req.user.id, { fcm_token: token });
-    res.json({ msg: 'Token saved' });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server Error');
@@ -300,7 +302,7 @@ app.get('/api/appointments/doctor-schedule', auth, async (req, res) => {
   }
 });
 
-// GET /api/appointments/requests (Doctor Pending Requests)
+// GET /api/appointments/requests
 app.get('/api/appointments/requests', auth, async (req, res) => {
   if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
@@ -347,7 +349,7 @@ app.get('/api/doctor/dashboard-stats', auth, async (req, res) => {
   }
 });
 
-// PUT /api/appointments/:id/status (Accept/Reject)
+// PUT /api/appointments/:id/status
 app.put('/api/appointments/:id/status', auth, async (req, res) => {
   if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
