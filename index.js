@@ -1,26 +1,67 @@
 // index.js
-const auth = require('./middleware/auth');
 const express = require('express');
+const cors = require('cors'); // Ensure you have installed: npm install cors
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const connectDB = require('./db');
-const { sendPushNotification } = require('./firebaseAdmin');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer'); // Ensure you have installed: npm install multer
+const auth = require('./middleware/auth'); // Keep your auth middleware file
+const { sendPushNotification } = require('./firebaseAdmin'); // Keep your firebase logic
 require('dotenv').config();
 
-const User = require('./models/User'); // This now has the 'admin' role
+// Models
+const User = require('./models/User');
 const Appointment = require('./models/Appointment');
 
+// Initialize App
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Connect Database
 connectDB();
+
+// Global Middleware
+app.use(cors());
 app.use(express.json());
 
+// Serve Uploaded Images Publicly
+// Access via: http://YOUR_IP:3000/uploads/filename.png
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ==========================================================
-// ===         NEW MIDDLEWARE FOR ADMIN-ONLY ROUTES       ===
+// ===              MULTER CONFIGURATION                  ===
+// ==========================================================
+// Ensure upload directory exists
+const uploadDir = 'uploads/';
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'uploads/');
+    },
+    filename: function (req, file, cb) {
+        // Unique filename: fieldname-timestamp.ext
+        cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
+
+// Helper: Get Full Image URL
+const getImageUrl = (req, filename) => {
+    if (!filename) return null;
+    return `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+};
+
+// ==========================================================
+// ===              ADMIN MIDDLEWARE                      ===
 // ==========================================================
 const adminAuth = (req, res, next) => {
   if (req.user.role !== 'admin') {
@@ -28,40 +69,51 @@ const adminAuth = (req, res, next) => {
   }
   next();
 };
+
+// ==========================================================
+// ===              AUTH ROUTES                           ===
 // ==========================================================
 
-
 /*
- * @route   POST /api/register
- * (This is your new registration route, it is correct)
+ * @route   POST /api/auth/register
+ * @desc    Register a new user (Patient or Doctor with Image)
  */
-app.post('/api/register', async (req, res) => {
+app.post('/api/auth/register', upload.single('profile_image'), async (req, res) => {
   try {
-    const { 
+    let { 
       full_name, email, password, role, 
       specialty, qualifications, experience,
       location, phoneNumber, consultationFee, availability 
     } = req.body;
 
-    // --- Prevent anyone from registering as 'admin' ---
-    if (role === 'admin') {
-      return res.status(400).json({ msg: 'Cannot register as admin.' });
+    // --- 1. Parsing Logic for Multipart Requests ---
+    // When sending images, data comes as strings. We must parse arrays/numbers.
+    if (role === 'doctor') {
+        if (typeof availability === 'string') availability = JSON.parse(availability);
+        if (typeof experience === 'string') experience = parseInt(experience);
+        if (typeof consultationFee === 'string') consultationFee = parseFloat(consultationFee);
     }
 
+    if (role === 'admin') return res.status(400).json({ msg: 'Cannot register as admin.' });
     if (!email || !password || !full_name || !role) {
       return res.status(400).json({ msg: 'Please enter all required fields' });
     }
     
     let user = await User.findOne({ email });
-    if (user) {
-      return res.status(400).json({ msg: 'User with this email already exists' });
-    }
+    if (user) return res.status(400).json({ msg: 'User already exists' });
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Handle Image
+    let profileImageUrl = null;
+    if (req.file) {
+        profileImageUrl = getImageUrl(req, req.file.filename);
+    }
+
     const newUserFields = {
-      full_name, email, password: hashedPassword, role,
+      full_name, email, password: hashedPassword, role, phoneNumber,
+      profile_image: profileImageUrl
     };
 
     if (role === 'doctor') {
@@ -69,63 +121,44 @@ app.post('/api/register', async (req, res) => {
       newUserFields.qualifications = qualifications;
       newUserFields.experience = experience;
       newUserFields.location = location;
-      newUserFields.phoneNumber = phoneNumber;
       newUserFields.consultationFee = consultationFee;
-      newUserFields.availability = JSON.stringify(availability);
+      newUserFields.availability = JSON.stringify(availability); // Store as string or object depending on your Schema
     }
 
     user = new User(newUserFields);
     await user.save();
 
-    res.status(201).json({
-      msg: 'User registered successfully!',
-      user: {
-        id: user._id,
-        full_name: user.full_name,
-        email: user.email,
-        role: user.role
-      },
+    // Generate Token
+    const payload = { user: { id: user._id, role: user.role } };
+    jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
+      if (err) throw err;
+      res.status(201).json({ msg: 'Registered!', token, user: { id: user._id, role: user.role, full_name: user.full_name } });
     });
 
   } catch (err) {
-    console.error(err.message);
+    console.error("Register Error:", err.message);
     res.status(500).send('Server Error');
   }
 });
 
-
 /*
- * @route   POST /api/login
- * (Unchanged)
+ * @route   POST /api/auth/login
  */
-app.post('/api/login', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ msg: 'Please enter all fields' });
-    }
+    if (!email || !password) return res.status(400).json({ msg: 'Please enter all fields' });
+
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
+    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
-    }
-    const payload = {
-      user: { id: user._id, role: user.role },
-    };
+    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
+
+    const payload = { user: { id: user._id, role: user.role } };
     jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
       if (err) throw err;
-      res.json({
-        token,
-        user: {
-          id: user._id,
-          full_name: user.full_name,
-          email: user.email,
-          role: user.role,
-        },
-      });
+      res.json({ token, user: { id: user._id, full_name: user.full_name, email: user.email, role: user.role } });
     });
   } catch (err) {
     console.error(err.message);
@@ -134,421 +167,206 @@ app.post('/api/login', async (req, res) => {
 });
 
 /*
- * @route   POST /api/auth/firebase-login
- * @desc    Login or Register a user verified by Firebase Phone Auth
+ * @route   GET /api/auth/profile
+ * @desc    Get current user details
  */
-app.post('/api/auth/firebase-login', async (req, res) => {
-  const { phoneNumber, full_name } = req.body;
-
-  if (!phoneNumber) {
-    return res.status(400).json({ msg: 'Phone number is required' });
-  }
-
-  try {
-    // 1. Check if user exists by Phone Number
-    let user = await User.findOne({ phoneNumber });
-
-    // 2. If user DOES NOT exist, Register them automatically
-    if (!user) {
-      if (!full_name) {
-        // If frontend didn't send a name, ask for it (status 202 means "Accepted but incomplete")
-        return res.status(202).json({ msg: 'New user. Please provide full name.' });
-      }
-
-      // Create new Patient
-      user = new User({
-        phoneNumber,
-        full_name,
-        role: 'patient' // Default role for phone auth is always patient
-      });
-      await user.save();
+app.get('/api/auth/profile', auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        res.json({ success: true, user });
+    } catch (err) {
+        res.status(500).send('Server Error');
     }
-
-    // 3. Login Logic (Generate JWT)
-    const payload = {
-      user: { id: user._id, role: user.role },
-    };
-
-    jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
-      if (err) throw err;
-      res.json({
-        token,
-        user: {
-          id: user._id,
-          full_name: user.full_name,
-          email: user.email, // Might be null now, which is okay
-          role: user.role,
-        },
-      });
-    });
-
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
 });
 
 /*
- * @route   GET /api/doctors
- * (Unchanged)
+ * @route   PUT /api/auth/profile
+ * @desc    Update Profile (Image + Text)
  */
+app.put('/api/auth/profile', auth, upload.single('profile_image'), async (req, res) => {
+    try {
+        const { full_name, phoneNumber, password } = req.body;
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+
+        if (full_name) user.full_name = full_name;
+        if (phoneNumber) user.phoneNumber = phoneNumber;
+        
+        if (password && password.trim().length > 0) {
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(password, salt);
+        }
+
+        if (req.file) {
+            user.profile_image = getImageUrl(req, req.file.filename);
+        }
+
+        await user.save();
+        res.json({ success: true, user });
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server Error');
+    }
+});
+
+// ==========================================================
+// ===              DOCTOR ROUTES                         ===
+// ==========================================================
+
 app.get('/api/doctors', auth, async (req, res) => {
   try {
     const doctors = await User.find({ role: 'doctor' }).select('-password');
     res.json(doctors);
   } catch (err) {
-    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
 
-
-/*
- * @route   GET /api/doctor-availability/:id
- * (Unchanged)
- */
-app.get('/api/doctor-availability/:id', auth, async (req, res) => {
+app.get('/api/doctors/:id/availability', auth, async (req, res) => {
   try {
-    const doctorId = req.params.id;
+    const doctor = await User.findById(req.params.id).select('availability');
+    if (!doctor || !doctor.availability) return res.status(404).json({ msg: 'Not found' });
     
-    const doctor = await User.findById(doctorId).select('availability');
-    if (!doctor || !doctor.availability) {
-      return res.status(404).json({ msg: 'Doctor or availability not found.' });
-    }
-    
-    const weeklySchedule = JSON.parse(doctor.availability);
+    // Parse availability string to object
+    let weeklySchedule = doctor.availability;
+    if (typeof weeklySchedule === 'string') weeklySchedule = JSON.parse(weeklySchedule);
 
     const now = new Date();
     const bookedSlots = await Appointment.find({
-      doctor: doctorId,
+      doctor: req.params.id,
       status: { $in: ['confirmed', 'pending'] },
       appointment_time: { $gte: now }
     }).select('appointment_time'); 
 
-    res.json({
-      weeklySchedule: weeklySchedule,
-      bookedSlots: bookedSlots.map(slot => slot.appointment_time),
-    });
-
+    res.json({ weeklySchedule, bookedSlots: bookedSlots.map(slot => slot.appointment_time) });
   } catch (err) {
-    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
 
+// ==========================================================
+// ===              APPOINTMENT ROUTES                    ===
+// ==========================================================
+
 /*
- * @route   POST /api/appointments/book
- * @desc    Book an appointment (With Double-Booking Prevention)
+ * @route   POST /api/appointments
+ * @desc    Book Appointment (Matches Flutter: bookAppointment)
  */
-app.post('/api/appointments/book', auth, async (req, res) => {
-  if (req.user.role !== 'patient') {
-    return res.status(403).json({ msg: 'Access denied: Only patients can book appointments.' });
-  }
+app.post('/api/appointments', auth, async (req, res) => {
+  if (req.user.role !== 'patient') return res.status(403).json({ msg: 'Patients only' });
   
   try {
-    const { doctor_id, appointment_time } = req.body;
-    const patient_id = req.user.id;
+    const { doctorId, appointmentTime } = req.body; // Note: Flutter sends 'doctorId' (camelCase)
+    if (!doctorId || !appointmentTime) return res.status(400).json({ msg: 'Missing data' });
 
-    if (!doctor_id || !appointment_time) {
-      return res.status(400).json({ msg: 'Please provide a doctor ID and appointment time.' });
-    }
-
-    // ==========================================================
-    // === 🛑 THE GATEKEEPER CHECK (Prevent Double Booking) ===
-    // ==========================================================
-    const existingAppointment = await Appointment.findOne({
-      doctor: doctor_id,
-      appointment_time: appointment_time,
-      // We check for 'pending' OR 'confirmed'. 
-      // If it's 'rejected' or 'cancelled', the slot is free.
+    // Double Booking Check
+    const exists = await Appointment.findOne({
+      doctor: doctorId,
+      appointment_time: appointmentTime,
       status: { $in: ['pending', 'confirmed'] } 
     });
 
-    if (existingAppointment) {
-      return res.status(409).json({ msg: 'Sorry, this time slot has just been booked by someone else.' });
-    }
-    // ==========================================================
+    if (exists) return res.status(409).json({ msg: 'Slot already booked' });
 
-    const newAppointment = new Appointment({
-      patient: patient_id,
-      doctor: doctor_id,
-      appointment_time: appointment_time,
+    const newAppt = new Appointment({
+      patient: req.user.id,
+      doctor: doctorId,
+      appointment_time: appointmentTime,
+      status: 'pending'
     });
 
-    await newAppointment.save();
-
-    res.status(201).json({
-      msg: 'Appointment request sent successfully!',
-      appointment: newAppointment,
-    });
-
+    await newAppt.save();
+    res.status(201).json({ msg: 'Booked', appointment: newAppt });
   } catch (err) {
-    console.error(err.message);
+    console.error(err);
     res.status(500).send('Server Error');
   }
 });
 
-
 /*
- * @route   GET /api/my-appointments
- * (Unchanged)
+ * @route   GET /api/appointments/my-appointments
  */
-app.get('/api/my-appointments', auth, async (req, res) => {
-  if (req.user.role !== 'patient') {
-    return res.status(403).json({ msg: 'Access denied.' });
-  }
+app.get('/api/appointments/my-appointments', auth, async (req, res) => {
   try {
-    const appointments = await Appointment.find({ patient: req.user.id })
-      .populate('doctor', 'full_name specialty location experience consultationFee')
+    const appts = await Appointment.find({ patient: req.user.id })
+      .populate('doctor', 'full_name specialty location experience consultationFee profile_image')
       .sort({ appointment_time: -1 });
-    res.json(appointments);
+    res.json(appts);
   } catch (err) {
-    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
 
 /*
- * @route   POST /api/users/save-fcm-token
- * (Unchanged)
+ * @route   GET /api/appointments/doctor-schedule
  */
-app.post('/api/users/save-fcm-token', auth, async (req, res) => {
-  const { token } = req.body;
-  const user_id = req.user.id;
-  if (!token) {
-    return res.status(400).json({ msg: 'No token provided.' });
-  }
+app.get('/api/appointments/doctor-schedule', auth, async (req, res) => {
+  if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
-    await User.findByIdAndUpdate(user_id, { fcm_token: token });
-    res.json({ msg: 'Token saved successfully.' });
+    const appts = await Appointment.find({ doctor: req.user.id })
+      .populate('patient', 'full_name profile_image')
+      .sort({ appointment_time: 1 });
+    res.json(appts);
   } catch (err) {
-    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
 
-
 /*
- * @route   GET /api/appointments/requests
- * (Unchanged)
+ * @route   PUT /api/appointments/:id/status
+ * @desc    Accept/Reject Appointment
  */
-app.get('/api/appointments/requests', auth, async (req, res) => {
-  if (req.user.role !== 'doctor') {
-    return res.status(403).json({ msg: 'Access denied: Doctors only.' });
-  }
+app.put('/api/appointments/:id/status', auth, async (req, res) => {
+  if (req.user.role !== 'doctor') return res.status(403).json({ msg: 'Doctors only' });
   try {
-    const requests = await Appointment.find({ 
-      doctor: req.user.id, 
-      status: 'pending' 
-    })
-    .populate('patient', 'full_name')
-    .sort({ appointment_time: 'asc' });
-    res.json(requests);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-
-/*
- * @route   GET /api/appointments/schedule
- * (Unchanged)
- */
-app.get('/api/appointments/schedule', auth, async (req, res) => {
-  if (req.user.role !== 'doctor') {
-    return res.status(403).json({ msg: 'Access denied: Doctors only.' });
-  }
-  try {
-    const doctor_id = req.user.id;
-    const schedule = await Appointment.find({ 
-      doctor: doctor_id, 
-      status: { $ne: 'pending' }
-    })
-    .populate('patient', 'full_name')
-    .sort({ appointment_time: 'desc' });
-    res.json(schedule);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-
-/*
- * @route   GET /api/doctor/dashboard-stats
- * (Unchanged)
- */
-app.get('/api/doctor/dashboard-stats', auth, async (req, res) => {
-  if (req.user.role !== 'doctor') {
-    return res.status(403).json({ msg: 'Access denied: Doctors only.' });
-  }
-  try {
-    const doctor_id = req.user.id;
-    const pendingCount = await Appointment.countDocuments({
-      doctor: doctor_id,
-      status: 'pending',
-    });
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const todaysAppointments = await Appointment.find({
-      doctor: doctor_id,
-      status: 'confirmed',
-      appointment_time: {
-        $gte: startOfDay,
-        $lt: endOfDay,
-      },
-    })
-    .populate('patient', 'full_name')
-    .sort({ appointment_time: 'asc' });
-    res.json({
-      pendingCount: pendingCount,
-      todaysCount: todaysAppointments.length,
-      todaysAppointments: todaysAppointments,
-    });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-
-/*
- * @route   PUT /api/appointments/accept/:id
- * (Unchanged)
- */
-app.put('/api/appointments/accept/:id', auth, async (req, res) => {
-  if (req.user.role !== 'doctor') {
-    return res.status(403).json({ msg: 'Access denied: Doctors only.' });
-  }
-  try {
-    const appointment_id = req.params.id;
-    const doctor_id = req.user.id;
-    const confirmedAppointment = await Appointment.findOneAndUpdate(
-      { _id: appointment_id, doctor: doctor_id, status: 'pending' },
-      { status: 'confirmed' },
+    const { status } = req.body;
+    const appt = await Appointment.findOneAndUpdate(
+      { _id: req.params.id, doctor: req.user.id },
+      { status: status },
       { new: true }
     );
-    if (!confirmedAppointment) {
-      return res.status(404).json({ msg: 'Appointment not found or you do not have permission.' });
-    }
+    
+    if (!appt) return res.status(404).json({ msg: 'Appointment not found' });
+
+    // --- PUSH NOTIFICATION LOGIC ---
     try {
-      const patient = await User.findById(confirmedAppointment.patient);
-      const patientToken = patient?.fcm_token;
-      if (patientToken) {
-        const doctor = await User.findById(doctor_id);
-        const doctorName = doctor.full_name;
-        const apptTime = new Date(confirmedAppointment.appointment_time).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-        await sendPushNotification(
-          patientToken,
-          'Appointment Confirmed!',
-          `Your appointment with ${doctorName} on ${apptTime} is confirmed.`
-        );
-      } else {
-        console.log('Patient has no FCM token. Skipping notification.');
-      }
-    } catch (notifyError) {
-      console.error('Failed to send push notification:', notifyError);
-    }
-    res.json({
-      msg: 'Appointment accepted',
-      appointment: confirmedAppointment,
-    });
+        const patient = await User.findById(appt.patient);
+        if (patient && patient.fcm_token) {
+            const doctor = await User.findById(req.user.id);
+            const title = status === 'confirmed' ? 'Appointment Confirmed!' : 'Appointment Declined';
+            const body = `Your appointment with Dr. ${doctor.full_name} has been ${status}.`;
+            await sendPushNotification(patient.fcm_token, title, body);
+        }
+    } catch (e) { console.error("Push Error", e); }
+
+    res.json({ success: true, appointment: appt });
   } catch (err) {
-    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
 
-
-/*
- * @route   PUT /api/appointments/reject/:id
- * (Unchanged)
- */
-app.put('/api/appointments/reject/:id', auth, async (req, res) => {
-  if (req.user.role !== 'doctor') {
-    return res.status(403).json({ msg: 'Access denied: Doctors only.' });
-  }
-  try {
-    const appointment_id = req.params.id;
-    const doctor_id = req.user.id;
-    const rejectedAppointment = await Appointment.findOneAndUpdate(
-      { _id: appointment_id, doctor: doctor_id, status: 'pending' },
-      { status: 'rejected' },
-      { new: true }
-    );
-    if (!rejectedAppointment) {
-      return res.status(404).json({ msg: 'Appointment not found or you do not have permission.' });
-    }
-    try {
-      const patient = await User.findById(rejectedAppointment.patient);
-      const patientToken = patient?.fcm_token;
-      if (patientToken) {
-        const doctor = await User.findById(doctor_id);
-        const doctorName = doctor.full_name;
-        await sendPushNotification(
-          patientToken,
-          'Appointment Update',
-          `Your appointment request with ${doctorName} for ${new Date(rejectedAppointment.appointment_time).toLocaleDateString()} was declined.`
-        );
-      }
-    } catch (notifyError) {
-      console.error('Failed to send rejection notification:', notifyError);
-    }
-    res.json({
-      msg: 'Appointment rejected',
-      appointment: rejectedAppointment,
-    });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-
 // ==========================================================
-// ===          NEW ADMIN-ONLY "GOD VIEW" ROUTES          ===
+// ===              ADMIN ROUTES                          ===
 // ==========================================================
 
-/*
- * @route   GET /api/admin/all-users
- * @desc    Get a list of ALL users (patients and doctors)
- * @access  Private (Admin-only)
- */
 app.get('/api/admin/all-users', [auth, adminAuth], async (req, res) => {
   try {
-    // Find all users, but remove their passwords from the response
     const users = await User.find().select('-password');
     res.json(users);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
+  } catch (err) { res.status(500).send('Server Error'); }
 });
 
-/*
- * @route   GET /api/admin/all-appointments
- * @desc    Get a list of ALL appointments in the system
- * @access  Private (Admin-only)
- */
 app.get('/api/admin/all-appointments', [auth, adminAuth], async (req, res) => {
   try {
-    // Find all appointments and populate both patient and doctor names
-    const appointments = await Appointment.find()
+    const appts = await Appointment.find()
       .populate('patient', 'full_name email')
       .populate('doctor', 'full_name email')
       .sort({ appointment_time: 'desc' });
-    res.json(appointments);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
+    res.json(appts);
+  } catch (err) { res.status(500).send('Server Error'); }
 });
-// ==========================================================
 
-
-// === Start the server ===
+// Start Server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
