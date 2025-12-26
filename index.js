@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const connectDB = require('./db');
 const { sendPushNotification } = require('./firebaseAdmin');
+const path = require('path');
 require('dotenv').config();
 
 const User = require('./models/User'); // This now has the 'admin' role
@@ -15,6 +16,8 @@ const PORT = process.env.PORT || 3000;
 
 connectDB();
 app.use(express.json());
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ==========================================================
 // ===         NEW MIDDLEWARE FOR ADMIN-ONLY ROUTES       ===
@@ -233,10 +236,6 @@ app.get('/api/doctor-availability/:id', auth, async (req, res) => {
   }
 });
 
-/*
- * @route   POST /api/appointments/book
- * (Unchanged)
- */
 /*
  * @route   POST /api/appointments/book
  * @desc    Book an appointment (With Double-Booking Prevention)

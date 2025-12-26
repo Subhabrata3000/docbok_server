@@ -4,5 +4,8 @@ node_modules/
 # Environment variables (secret keys)
 .env
 
+uploads/
+.DS_Store
+
 # Firebase service account (very secret!)
 serviceAccountKey.json
