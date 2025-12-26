@@ -237,26 +237,52 @@ app.get('/api/doctor-availability/:id', auth, async (req, res) => {
  * @route   POST /api/appointments/book
  * (Unchanged)
  */
+/*
+ * @route   POST /api/appointments/book
+ * @desc    Book an appointment (With Double-Booking Prevention)
+ */
 app.post('/api/appointments/book', auth, async (req, res) => {
   if (req.user.role !== 'patient') {
     return res.status(403).json({ msg: 'Access denied: Only patients can book appointments.' });
   }
+  
   try {
     const { doctor_id, appointment_time } = req.body;
     const patient_id = req.user.id;
+
     if (!doctor_id || !appointment_time) {
       return res.status(400).json({ msg: 'Please provide a doctor ID and appointment time.' });
     }
+
+    // ==========================================================
+    // === 🛑 THE GATEKEEPER CHECK (Prevent Double Booking) ===
+    // ==========================================================
+    const existingAppointment = await Appointment.findOne({
+      doctor: doctor_id,
+      appointment_time: appointment_time,
+      // We check for 'pending' OR 'confirmed'. 
+      // If it's 'rejected' or 'cancelled', the slot is free.
+      status: { $in: ['pending', 'confirmed'] } 
+    });
+
+    if (existingAppointment) {
+      return res.status(409).json({ msg: 'Sorry, this time slot has just been booked by someone else.' });
+    }
+    // ==========================================================
+
     const newAppointment = new Appointment({
       patient: patient_id,
       doctor: doctor_id,
       appointment_time: appointment_time,
     });
+
     await newAppointment.save();
+
     res.status(201).json({
       msg: 'Appointment request sent successfully!',
       appointment: newAppointment,
     });
+
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
