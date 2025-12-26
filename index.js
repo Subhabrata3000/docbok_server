@@ -379,6 +379,49 @@ app.put('/api/appointments/:id/status', auth, async (req, res) => {
   }
 });
 
+// PUT /api/auth/profile
+app.put('/api/auth/profile', auth, upload.single('profile_image'), async (req, res) => {
+    try {
+        const { 
+            full_name, phoneNumber, password,
+            // Doctor specific fields
+            specialty, qualifications, experience, location, consultationFee, bio 
+        } = req.body;
+
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ msg: 'User not found' });
+
+        // 1. Basic Updates
+        if (full_name) user.full_name = full_name;
+        if (phoneNumber) user.phoneNumber = phoneNumber;
+        
+        if (password && password.trim().length > 0) {
+            const salt = await bcrypt.genSalt(10);
+            user.password = await bcrypt.hash(password, salt);
+        }
+
+        if (req.file) {
+            user.profile_image = getImageUrl(req, req.file.filename);
+        }
+
+        // 2. Doctor-Specific Updates (Only if the user is a doctor)
+        if (user.role === 'doctor') {
+            if (specialty) user.specialty = specialty;
+            if (qualifications) user.qualifications = qualifications;
+            if (experience) user.experience = Number(experience);
+            if (location) user.location = location;
+            if (consultationFee) user.consultationFee = Number(consultationFee);
+            if (bio) user.bio = bio; // Ensure your User model has a 'bio' field if you use this
+        }
+
+        await user.save();
+        res.json({ success: true, user });
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server Error');
+    }
+});
+
 // ==========================================================
 // ===              ADMIN ROUTES                          ===
 // ==========================================================
