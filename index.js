@@ -803,12 +803,16 @@ app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
     
     if (!appt) return res.status(404).json({ success: false, msg: 'Appointment not found' });
 
+    // --- FIX: Fetch the Doctor's details to get the Name ---
+    const doctor = await User.findById(req.user.id).select('full_name');
+    const doctorName = doctor ? doctor.full_name : 'the Doctor';
+
     // 3. Create Database Notification (Safely)
     try {
         await Notification.create({
             user: appt.patient._id, 
             title: `Appointment ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-            message: `Your appointment with Dr. ${req.user.full_name} has been ${status}.`,
+            message: `Your appointment with Dr. ${doctorName} has been ${status}.`, // <--- Uses Real Name Now
             type: 'appointment',
             createdAt: new Date()
         });
