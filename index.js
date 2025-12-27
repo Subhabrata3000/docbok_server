@@ -462,6 +462,7 @@ const multer = require('multer');
 const connectDB = require('./db');
 const auth = require('./middleware/auth');
 const { sendPushNotification } = require('./firebaseAdmin');
+const Notification = require('./models/Notification');
 require('dotenv').config();
 
 // --- CLOUDINARY SETUP ---
@@ -647,6 +648,40 @@ app.put('/api/auth/profile', auth, upload.single('profile_image'), asyncHandler(
     
     res.json({ success: true, user: userResponse });
 }));
+
+
+// 1. UPDATE APPOINTMENT STATUS & CREATE NOTIFICATION
+app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
+    const { status } = req.body;
+    const appointment = await Appointment.findById(req.params.id);
+
+    if (!appointment) return res.status(404).json({ msg: 'Appointment not found' });
+
+    // Update Status
+    appointment.status = status;
+    await appointment.save();
+
+    // --- CREATE NOTIFICATION ---
+    // This saves the alert to the database with the CURRENT time
+    await Notification.create({
+        user: appointment.patient, // Send to the Patient
+        title: `Appointment ${status.charAt(0).toUpperCase() + status.slice(1)}`,
+        message: `Your appointment with Dr. ${req.user.full_name} has been ${status}.`,
+        type: 'appointment'
+    });
+    // ---------------------------
+
+    res.json({ success: true, data: appointment });
+}));
+
+// 2. GET NOTIFICATIONS ROUTE
+app.get('/api/notifications', auth, asyncHandler(async (req, res) => {
+    // Fetch notifications for the logged-in user, newest first
+    const notifications = await Notification.find({ user: req.user.id })
+        .sort({ createdAt: -1 }); 
+    res.json(notifications);
+}));
+
 
 // ==========================================================
 // ===               USER / NOTIFICATION ROUTES           ===
