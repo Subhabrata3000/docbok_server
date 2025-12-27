@@ -849,6 +849,21 @@ app.get('/api/admin/all-appointments', [auth, adminAuth], asyncHandler(async (re
     res.json(appts);
 }));
 
+// 1. GET Unread Count (For the Badge)
+app.get('/api/notifications/unread-count', auth, asyncHandler(async (req, res) => {
+    const count = await Notification.countDocuments({ user: req.user.id, isRead: false });
+    res.json({ success: true, count });
+}));
+
+// 2. PUT Mark All as Read (To clear the Badge)
+app.put('/api/notifications/mark-read', auth, asyncHandler(async (req, res) => {
+    await Notification.updateMany(
+        { user: req.user.id, isRead: false },
+        { $set: { isRead: true } }
+    );
+    res.json({ success: true, msg: 'Notifications marked as read' });
+}));
+
 // Start Server
 app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
