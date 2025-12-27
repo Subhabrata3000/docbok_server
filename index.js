@@ -605,19 +605,26 @@ app.get('/api/auth/profile', auth, asyncHandler(async (req, res) => {
 
 // PUT /api/auth/profile
 app.put('/api/auth/profile', auth, upload.single('profile_image'), asyncHandler(async (req, res) => {
-    const { full_name, phoneNumber, password, specialty, qualifications, experience, location, consultationFee, bio } = req.body;
+    // 1. Get availability from req.body
+    let { 
+        full_name, phoneNumber, password, 
+        specialty, qualifications, experience, location, consultationFee, bio,
+        availability // <--- Added this
+    } = req.body;
     
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ success: false, msg: 'User not found' });
 
+    // 2. Basic Updates
     if (full_name) user.full_name = full_name;
     if (phoneNumber) user.phoneNumber = phoneNumber;
     if (req.file) user.profile_image = req.file.path; // Cloudinary URL
 
     if (password && password.trim().length > 0) {
-        user.password = await bcrypt.hash(password, 10); // Hash new password
+        user.password = await bcrypt.hash(password, 10);
     }
 
+    // 3. Doctor-Specific Updates
     if (user.role === 'doctor') {
         if (specialty) user.specialty = specialty;
         if (qualifications) user.qualifications = qualifications;
@@ -625,6 +632,21 @@ app.put('/api/auth/profile', auth, upload.single('profile_image'), asyncHandler(
         if (location) user.location = location;
         if (consultationFee) user.consultationFee = Number(consultationFee);
         if (bio) user.bio = bio;
+
+        // --- THE FIX: PARSE AVAILABILITY ---
+        if (availability) {
+            try {
+                // If Flutter sent it as a string (Multipart), parse it back to JSON
+                if (typeof availability === 'string') {
+                    user.availability = JSON.parse(availability);
+                } else {
+                    user.availability = availability;
+                }
+            } catch (e) {
+                console.error("Error parsing availability:", e);
+                // Do not crash, just skip updating availability if bad data
+            }
+        }
     }
 
     await user.save();
