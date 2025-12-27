@@ -462,7 +462,7 @@ const multer = require('multer');
 const connectDB = require('./db');
 const auth = require('./middleware/auth');
 const { sendPushNotification } = require('./firebaseAdmin');
-const Notification = require('./models/Notification');
+
 require('dotenv').config();
 
 // --- CLOUDINARY SETUP ---
@@ -472,6 +472,7 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 // Models
 const User = require('./models/User');
 const Appointment = require('./models/Appointment');
+const Notification = require('./models/Notification'); // Ensure this file exists in /models
 
 // Initialize App
 const app = express();
@@ -502,14 +503,13 @@ const storage = new CloudinaryStorage({
     },
 });
 
-// Added 'limits' back from your original code
 const upload = multer({ 
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 } // 5MB Limit
 });
 
 // ==========================================================
-// ===               HELPER / MIDDLEWARE                  ===
+// ===              HELPER / MIDDLEWARE                   ===
 // ==========================================================
 
 const adminAuth = (req, res, next) => {
@@ -517,7 +517,7 @@ const adminAuth = (req, res, next) => {
     return res.status(403).json({ success: false, msg: 'Access denied. Admin-only route.' });
 };
 
-// Async Handler (Keeps code clean)
+// Async Handler
 const asyncHandler = (fn) => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch((err) => {
         console.error(`❌ Error in ${req.originalUrl}:`, err.message);
@@ -526,7 +526,7 @@ const asyncHandler = (fn) => (req, res, next) => {
 };
 
 // ==========================================================
-// ===                   AUTH ROUTES                      ===
+// ===                  AUTH ROUTES                       ===
 // ==========================================================
 
 // POST /api/auth/register
@@ -633,10 +633,8 @@ app.put('/api/auth/profile', auth, upload.single('profile_image'), asyncHandler(
         if (consultationFee) user.consultationFee = Number(consultationFee);
         if (bio) user.bio = bio;
 
-        // --- THE FIX ---
         if (availability) {
             // Database expects a String. Flutter sends a String.
-            // We save it DIRECTLY as a string. (Do not use JSON.parse here)
             user.availability = availability; 
         }
     }
@@ -649,42 +647,8 @@ app.put('/api/auth/profile', auth, upload.single('profile_image'), asyncHandler(
     res.json({ success: true, user: userResponse });
 }));
 
-
-// 1. UPDATE APPOINTMENT STATUS & CREATE NOTIFICATION
-app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
-    const { status } = req.body;
-    const appointment = await Appointment.findById(req.params.id);
-
-    if (!appointment) return res.status(404).json({ msg: 'Appointment not found' });
-
-    // Update Status
-    appointment.status = status;
-    await appointment.save();
-
-    // --- CREATE NOTIFICATION ---
-    // This saves the alert to the database with the CURRENT time
-    await Notification.create({
-        user: appointment.patient, // Send to the Patient
-        title: `Appointment ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-        message: `Your appointment with Dr. ${req.user.full_name} has been ${status}.`,
-        type: 'appointment'
-    });
-    // ---------------------------
-
-    res.json({ success: true, data: appointment });
-}));
-
-// 2. GET NOTIFICATIONS ROUTE
-app.get('/api/notifications', auth, asyncHandler(async (req, res) => {
-    // Fetch notifications for the logged-in user, newest first
-    const notifications = await Notification.find({ user: req.user.id })
-        .sort({ createdAt: -1 }); 
-    res.json(notifications);
-}));
-
-
 // ==========================================================
-// ===               USER / NOTIFICATION ROUTES           ===
+// ===           USER / NOTIFICATION ROUTES               ===
 // ==========================================================
 
 // POST Save FCM Token
@@ -696,8 +660,15 @@ app.post('/api/users/save-fcm-token', auth, asyncHandler(async (req, res) => {
     res.json({ success: true, msg: 'Token saved' });
 }));
 
+// GET Notifications (Fetch list for UI)
+app.get('/api/notifications', auth, asyncHandler(async (req, res) => {
+    const notifications = await Notification.find({ user: req.user.id })
+        .sort({ createdAt: -1 }); 
+    res.json(notifications);
+}));
+
 // ==========================================================
-// ===                    DOCTOR ROUTES                   ===
+// ===                  DOCTOR ROUTES                     ===
 // ==========================================================
 
 // GET All Doctors
@@ -816,11 +787,14 @@ app.get('/api/appointments/requests', auth, asyncHandler(async (req, res) => {
     res.json(requests);
 }));
 
-// PUT Update Status (With Safe Push Notification)
+// PUT Update Status (Combined Master Route)
 app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
+    // 1. Security Check
     if (req.user.role !== 'doctor') return res.status(403).json({ success: false, msg: 'Doctors only' });
     
     const { status } = req.body;
+    
+    // 2. Find Appointment
     const appt = await Appointment.findOneAndUpdate(
         { _id: req.params.id, doctor: req.user.id },
         { status: status },
@@ -829,17 +803,32 @@ app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
     
     if (!appt) return res.status(404).json({ success: false, msg: 'Appointment not found' });
 
+    // 3. Create Database Notification (Safely)
+    try {
+        await Notification.create({
+            user: appt.patient._id, 
+            title: `Appointment ${status.charAt(0).toUpperCase() + status.slice(1)}`,
+            message: `Your appointment with Dr. ${req.user.full_name} has been ${status}.`,
+            type: 'appointment',
+            createdAt: new Date()
+        });
+    } catch (dbError) {
+        console.error("DB Notification failed:", dbError.message);
+    }
+
+    // 4. Send Push Notification (Safely)
     if (appt.patient && appt.patient.fcm_token) {
         const title = status === 'confirmed' ? 'Appointment Confirmed!' : 'Appointment Update';
         const body = `Your appointment status has been updated to ${status}.`;
-        sendPushNotification(appt.patient.fcm_token, title, body).catch(e => console.error("Push failed:", e));
+        sendPushNotification(appt.patient.fcm_token, title, body)
+            .catch(e => console.error("Push Notification failed:", e));
     }
 
     res.json({ success: true, appointment: appt });
 }));
 
 // ==========================================================
-// ===                  ADMIN ROUTES                      ===
+// ===                   ADMIN ROUTES                     ===
 // ==========================================================
 
 app.get('/api/admin/all-users', [auth, adminAuth], asyncHandler(async (req, res) => {
