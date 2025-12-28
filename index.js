@@ -820,12 +820,27 @@ app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
         console.error("DB Notification failed:", dbError.message);
     }
 
-    // 4. Send Push Notification (Safely)
+// 4. Send Push Notification (Safely)
     if (appt.patient && appt.patient.fcm_token) {
-        const title = status === 'confirmed' ? 'Appointment Confirmed!' : 'Appointment Update';
-        const body = `Your appointment status has been updated to ${status}.`;
-        sendPushNotification(appt.patient.fcm_token, title, body)
-            .catch(e => console.error("Push Notification failed:", e));
+        let title = '';
+        let body = '';
+
+        if (status === 'confirmed') {
+            title = 'Appointment Confirmed! ✅';
+            body = `Good news! Dr. ${doctorName} has accepted your appointment.`;
+        } else if (status === 'rejected') {
+            title = 'Request Declined ❌'; 
+            body = `Dr. ${doctorName} is unable to take your appointment.`;
+        } else {
+            title = 'Appointment Update';
+            body = `Your status is now: ${status}`;
+        }
+
+        // Only send if we have a title (prevents empty notifications)
+        if (title) {
+            sendPushNotification(appt.patient.fcm_token, title, body)
+                .catch(e => console.error("Push Notification failed:", e));
+        }
     }
 
     res.json({ success: true, appointment: appt });
