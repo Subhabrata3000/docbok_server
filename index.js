@@ -870,6 +870,40 @@ app.get('/api/notifications/unread-count', auth, asyncHandler(async (req, res) =
     res.json({ success: true, count });
 }));
 
+// POST /api/admin/remind-doctor/:id
+// Desc: Admin sends a "Nudge" notification to the doctor about a pending appointment
+app.post('/api/admin/remind-doctor/:id', [auth, adminAuth], asyncHandler(async (req, res) => {
+    const appointment = await Appointment.findById(req.params.id)
+        .populate('doctor', 'full_name') // Get doctor's ID to notify them
+        .populate('patient', 'full_name');
+
+    if (!appointment) {
+        res.status(404);
+        throw new Error('Appointment not found');
+    }
+
+    if (appointment.status !== 'pending') {
+        res.status(400);
+        throw new Error('Appointment is not pending');
+    }
+
+    // 1. Create the Notification for the DOCTOR
+    // We assume the Appointment model has a 'doctor' field which is a User ID
+    await Notification.create({
+        user: appointment.doctor._id, // Send to Doctor
+        type: 'system_alert',         // New type for admin messages
+        title: 'Action Required: Admin Reminder',
+        message: `Admin requests you to review the pending appointment for ${appointment.patient.full_name}.`,
+        relatedId: appointment._id,
+        onModel: 'Appointment'
+    });
+
+    // 2. (Optional) Send Real-time Push if you have FCM set up here
+    // sendPushNotification(appointment.doctor._id, "Admin Reminder", "Please review pending request.");
+
+    res.json({ success: true, msg: 'Reminder sent to doctor successfully' });
+}));
+
 // 2. PUT Mark All as Read (To clear the Badge)
 app.put('/api/notifications/mark-read', auth, asyncHandler(async (req, res) => {
     await Notification.updateMany(
