@@ -857,8 +857,8 @@ app.get('/api/admin/all-users', [auth, adminAuth], asyncHandler(async (req, res)
 
 app.get('/api/admin/all-appointments', [auth, adminAuth], asyncHandler(async (req, res) => {
     const appts = await Appointment.find()
-        .populate('patient', 'full_name email')
-        .populate('doctor', 'full_name email')
+        .populate('patient', 'full_name email phone gender age') // Added phone, gender, age
+        .populate('doctor', 'full_name email profile_image specialty consultationFee location') // ✅ ADDED THESE!
         .sort({ appointment_time: 'desc' })
         .lean();
     res.json(appts);
