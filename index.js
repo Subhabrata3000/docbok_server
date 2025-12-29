@@ -412,6 +412,41 @@ app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
 // ===                  ADMIN ROUTES                      ===
 // ==========================================================
 
+// POST /api/admin/broadcast
+// Desc: Send a message to ALL doctors
+app.post('/api/admin/broadcast', [auth, adminAuth], asyncHandler(async (req, res) => {
+    const { title, message } = req.body;
+
+    if (!title || !message) {
+        return res.status(400).json({ success: false, msg: 'Title and message are required' });
+    }
+
+    // 1. Find ALL Doctors
+    const doctors = await User.find({ role: 'doctor' }).select('_id');
+
+    if (doctors.length === 0) {
+        return res.status(404).json({ success: false, msg: 'No doctors found to broadcast to.' });
+    }
+
+    // 2. Prepare Notifications Array
+    const notifications = doctors.map(doc => ({
+        user: doc._id,
+        title: title,
+        message: message,
+        type: 'system', // 'system' is already in your enum
+        isRead: false,
+        createdAt: new Date()
+    }));
+
+    // 3. Bulk Insert (Fast!)
+    await Notification.insertMany(notifications);
+
+    // 4. (Optional) Loop to send Push Notifications here if you want
+    // doctors.forEach(doc => { ... sendPushNotification ... })
+
+    res.json({ success: true, msg: `Broadcast sent to ${doctors.length} doctors` });
+}));
+
 app.get('/api/admin/all-users', [auth, adminAuth], asyncHandler(async (req, res) => {
     const users = await User.find().select('-password').lean();
     res.json(users);
