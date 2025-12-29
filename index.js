@@ -388,10 +388,10 @@ app.put('/api/appointments/:id/status', auth, asyncHandler(async (req, res) => {
         let body = '';
 
         if (status === 'confirmed') {
-            title = 'Appointment Confirmed! ✅'; 
+            //title = 'Appointment Confirmed! ✅'; 
             body = `Good news! Dr. ${doctorName} has accepted your appointment.`;
         } else if (status === 'rejected') {
-            title = 'Request Declined ❌'; 
+            //title = 'Request Declined ❌'; 
             body = `Dr. ${doctorName} is unable to take your appointment.`;
         } else {
             title = 'Appointment Update';
