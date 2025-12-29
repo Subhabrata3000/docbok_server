@@ -870,39 +870,49 @@ app.get('/api/notifications/unread-count', auth, asyncHandler(async (req, res) =
     res.json({ success: true, count });
 }));
 
+// ==========================================================
+// ===         ADMIN: REMIND DOCTOR (NUDGE SYSTEM)        ===
+// ==========================================================
+
 // POST /api/admin/remind-doctor/:id
-// Desc: Admin sends a "Nudge" notification to the doctor about a pending appointment
+// Desc: Admin sends a "System Alert" to the doctor to review a pending request
 app.post('/api/admin/remind-doctor/:id', [auth, adminAuth], asyncHandler(async (req, res) => {
+    
+    // 1. Find the appointment
     const appointment = await Appointment.findById(req.params.id)
-        .populate('doctor', 'full_name') // Get doctor's ID to notify them
-        .populate('patient', 'full_name');
+        .populate('doctor', 'full_name') // We need Doctor ID to send notif
+        .populate('patient', 'full_name'); // We need Patient Name for the message
 
     if (!appointment) {
         res.status(404);
         throw new Error('Appointment not found');
     }
 
+    // 2. Security Check: Only Nudge if Pending
     if (appointment.status !== 'pending') {
         res.status(400);
-        throw new Error('Appointment is not pending');
+        throw new Error(`Cannot send reminder for a ${appointment.status} appointment.`);
     }
 
-    // 1. Create the Notification for the DOCTOR
-    // We assume the Appointment model has a 'doctor' field which is a User ID
+    // 3. Create the Notification in Database
+    // The Doctor's app will fetch this when they tap the "Bell Icon"
     await Notification.create({
-        user: appointment.doctor._id, // Send to Doctor
-        type: 'system_alert',         // New type for admin messages
-        title: 'Action Required: Admin Reminder',
-        message: `Admin requests you to review the pending appointment for ${appointment.patient.full_name}.`,
-        relatedId: appointment._id,
-        onModel: 'Appointment'
+        user: appointment.doctor._id,   // Target: The Doctor
+        type: 'system_alert',           // Special type for red highlighting
+        title: 'Action Required: Pending Request',
+        message: `Admin Reminder: Please review the appointment request from ${appointment.patient.full_name}.`,
+        relatedId: appointment._id,     // Links to the appointment details
+        onModel: 'Appointment',
+        isRead: false
     });
 
-    // 2. (Optional) Send Real-time Push if you have FCM set up here
-    // sendPushNotification(appointment.doctor._id, "Admin Reminder", "Please review pending request.");
+    // 4. (Optional) Real-time Socket.io or FCM Push could go here
+    // sendPushToUser(appointment.doctor._id, "Admin Reminder", "Please review pending request.");
 
     res.json({ success: true, msg: 'Reminder sent to doctor successfully' });
 }));
+
+
 
 // 2. PUT Mark All as Read (To clear the Badge)
 app.put('/api/notifications/mark-read', auth, asyncHandler(async (req, res) => {
