@@ -10,12 +10,16 @@ const notificationSchema = new mongoose.Schema({
     message: { type: String, required: true },
     type: { 
         type: String, 
-        enum: ['appointment', 'system', 'promo'], 
+        // ✅ UPDATED: Added 'system_alert' to this list
+        enum: ['appointment', 'system', 'promo', 'system_alert'], 
         default: 'system' 
     },
+    // Optional: Add relatedId and onModel if you want deep linking later (Safe to add now)
+    relatedId: { type: mongoose.Schema.Types.ObjectId },
+    onModel: { type: String },
+    
     isRead: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
 });
 
-// 👇 THIS LINE IS CRITICAL. WITHOUT IT, YOU GET "find is not a function"
 module.exports = mongoose.model('Notification', notificationSchema);
