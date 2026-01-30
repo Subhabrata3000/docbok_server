@@ -5,7 +5,7 @@ import os
 from textblob import TextBlob
 
 # ---------------- CONFIGURATION ----------------
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu") # Render uses CPU
 MAX_LEN = 100
 
 # ---------------- MODEL ARCHITECTURE ----------------
@@ -72,7 +72,8 @@ class SymptomPredictor:
             num_layers=config['NUM_LAYERS']
         ).to(DEVICE)
         
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        # ✅ FIXED LINE: strict=False ignores the missing 'pos_encoding.pe'
+        self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         self.model.eval()
         print("✅ AI Brain Loaded & Ready!")
 
@@ -106,5 +107,4 @@ class SymptomPredictor:
         except Exception as e:
             return {"error": str(e)}
 
-# 👇 THIS VARIABLE IS WHAT SERVER.PY IS LOOKING FOR!
 predictor = SymptomPredictor("symptom_transformer.pth")
