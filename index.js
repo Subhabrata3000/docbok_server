@@ -503,6 +503,24 @@ app.post('/api/admin/remind-doctor/:id', [auth, adminAuth], asyncHandler(async (
     res.json({ success: true, msg: 'Reminder sent to doctor successfully' });
 }));
 
+
+// For AI Integration
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+
+app.post('/api/predict', async (req, res) => {
+    try {
+        const { symptom } = req.body;
+        // Use the variable URL instead of hardcoded localhost
+        const aiResponse = await axios.post(`${AI_SERVICE_URL}/predict`, { 
+            symptom: symptom 
+        });
+        res.json({ success: true, data: aiResponse.data });
+    } catch (error) {
+        console.error("AI Error:", error.message);
+        res.status(500).json({ success: false });
+    }
+});
+
 // Start Server
 app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
