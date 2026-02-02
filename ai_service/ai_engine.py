@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 import math
 import os
+import random
 from textblob import TextBlob
 
 # ---------------- CONFIGURATION ----------------
-DEVICE = torch.device("cpu") # Render uses CPU
+DEVICE = torch.device("cpu") 
 MAX_LEN = 100
 
-# ---------------- MODEL ARCHITECTURE ----------------
+# ---------------- MODEL ARCHITECTURE (DO NOT TOUCH) ----------------
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=MAX_LEN):
         super().__init__()
@@ -45,12 +46,108 @@ class TransformerModel(nn.Module):
         out = self.transformer(src_emb, tgt_emb, tgt_mask=tgt_mask)
         return self.fc_out(out)
 
-# ---------------- PREDICTOR CLASS ----------------
+# ---------------- 🧠 SMART PREDICTOR CLASS ----------------
 class SymptomPredictor:
     def __init__(self, model_path):
         self.model = None
         self.word2idx = {}
         self.idx2word = {}
+        
+        # ✅ EXTENDED MEDICAL ADVICE DATABASE (Non-Diagnostic, Supportive Care Only)
+        self.advice_db = {
+            "fungal infection": (
+                "Keep the affected area clean and completely dry. "
+                "Avoid sharing towels, clothes, or footwear. "
+                "Wear loose, breathable cotton clothing. "
+                "Do not scratch the area, as it can spread the infection. "
+                "If symptoms persist or worsen, consult a dermatologist."
+            ),
+            "allergy": (
+                "Identify and avoid known allergens such as dust, pollen, or pet dander. "
+                "Keep windows closed during high pollen seasons. "
+                "Use masks in polluted environments. "
+                "Over-the-counter antihistamines may help, but consult a doctor if symptoms are severe."
+            ),
+            "malaria": (
+                "Seek medical attention immediately for confirmation through blood tests. "
+                "Rest adequately and drink plenty of fluids to prevent dehydration. "
+                "Avoid self-medication. "
+                "Use mosquito nets and repellents to prevent further bites."
+            ),
+            "jaundice": (
+                "Drink plenty of boiled or filtered water. "
+                "Eat easily digestible, low-fat foods. "
+                "Avoid alcohol and oily or spicy foods completely. "
+                "Take adequate rest and follow up with liver function tests as advised by a doctor."
+            ),
+            "stomach infection": (
+                "Stay hydrated by drinking ORS or electrolyte solutions. "
+                "Eat bland foods like rice, bananas, yogurt, and toast. "
+                "Avoid spicy, oily, or outside food. "
+                "If vomiting or diarrhea persists, seek medical help."
+            ),
+            "bronchial asthma": (
+                "Keep prescribed inhalers accessible at all times. "
+                "Avoid known triggers such as smoke, dust, cold air, and strong odors. "
+                "Practice breathing exercises if advised. "
+                "Seek emergency care if breathlessness suddenly worsens."
+            ),
+            "cervical spondylosis": (
+                "Maintain proper posture while sitting and using electronic devices. "
+                "Avoid prolonged screen time without breaks. "
+                "Gentle neck stretching and physiotherapy exercises may help. "
+                "Use a firm pillow and avoid sudden neck movements."
+            ),
+            "migraine": (
+                "Rest in a dark, quiet room during an attack. "
+                "Avoid loud noise, bright lights, and screen exposure. "
+                "Stay well hydrated and do not skip meals. "
+                "Identify and avoid personal triggers such as stress or lack of sleep."
+            ),
+            "arthritis": (
+                "Apply warm compresses to relieve stiffness and cold packs for swelling. "
+                "Engage in gentle joint movements to maintain flexibility. "
+                "Maintain a healthy weight to reduce joint stress. "
+                "Avoid heavy lifting or overexertion."
+            ),
+            "viral fever": (
+                "Take complete rest and stay hydrated. "
+                "Monitor body temperature regularly. "
+                "Eat light, nutritious food. "
+                "Avoid antibiotics unless prescribed by a doctor."
+            ),
+            "dengue": (
+                "Seek immediate medical supervision and regular blood tests. "
+                "Drink plenty of fluids such as water, coconut water, and ORS. "
+                "Avoid painkillers like ibuprofen or aspirin. "
+                "Watch for warning signs like bleeding or severe abdominal pain."
+            ),
+            "typhoid": (
+                "Complete the full course of prescribed medication. "
+                "Maintain strict hygiene and drink safe water. "
+                "Eat soft, low-fiber foods during recovery. "
+                "Avoid street food until fully recovered."
+            ),
+            "covid-19": (
+                "Isolate yourself to prevent spread. "
+                "Monitor oxygen levels and temperature regularly. "
+                "Stay hydrated and get adequate rest. "
+                "Seek medical attention if breathing difficulty develops."
+            ),
+            "food poisoning": (
+                "Avoid solid food temporarily if vomiting is severe. "
+                "Sip ORS or clear fluids frequently. "
+                "Avoid dairy, caffeine, and alcohol. "
+                "Seek medical care if symptoms persist beyond 24 hours."
+            ),
+            "dehydration": (
+                "Increase fluid intake immediately using ORS or electrolyte drinks. "
+                "Avoid excessive heat exposure. "
+                "Eat water-rich fruits. "
+                "Seek medical help if dizziness or confusion occurs."
+            )
+        }
+        
         self._load_model(model_path)
 
     def _load_model(self, path):
@@ -72,7 +169,6 @@ class SymptomPredictor:
             num_layers=config['NUM_LAYERS']
         ).to(DEVICE)
         
-        # ✅ FIXED LINE: strict=False ignores the missing 'pos_encoding.pe'
         self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         self.model.eval()
         print("✅ AI Brain Loaded & Ready!")
@@ -80,11 +176,56 @@ class SymptomPredictor:
     def _encode_text(self, text):
         return [self.word2idx.get(w, self.word2idx.get("<unk>", 0)) for w in text.lower().split()]
 
+    # --- HYBRID LOGIC LAYER (Fixes silly mistakes) ---
+    def _apply_medical_logic(self, input_text, prediction):
+        text = input_text.lower()
+        pred = prediction.lower()
+
+        # 1. SPONDYLOSIS BLOCKER
+        if "spondylosis" in pred:
+            if any(x in text for x in ["fever", "cold", "flu", "shiver", "temperature"]):
+                return "viral fever"
+            if any(x in text for x in ["stomach", "pain", "vomit", "nausea", "abdomen"]):
+                return "stomach infection"
+            if any(x in text for x in ["skin", "rash", "itch", "yellow"]):
+                return "fungal infection" if "itch" in text else "jaundice"
+
+        # 2. KEYWORD OVERRIDES
+        if "yellow" in text and "skin" in text: return "jaundice"
+        if "itch" in text or "rash" in text: return "fungal infection"
+        if "shiver" in text and "fever" in text: return "malaria"
+        
+        return prediction
+
+    # --- 🗣️ CONVERSATIONAL LAYER (Makes it polite) ---
+    def _format_polite_response(self, diagnosis):
+        diagnosis = diagnosis.strip().lower()
+        
+        # Get advice or a generic fallback
+        advice = self.advice_db.get(diagnosis, "Please consult a general physician for a detailed checkup.")
+        
+        # Capitalize for display
+        display_name = diagnosis.title()
+
+        # Templates for variety
+        openers = [
+            f"Based on your symptoms, it looks like you might have **{display_name}**.",
+            f"I have analyzed your symptoms. The indicators point towards **{display_name}**.",
+            f"It seems you are experiencing symptoms of **{display_name}**."
+        ]
+        
+        chosen_opener = random.choice(openers)
+        
+        # The frontend will likely treat \n as line breaks
+        return f"{chosen_opener}\n\n💡 **Dr. AI Recommends:**\n{advice}"
+
     def predict(self, sentence):
         try:
+            # 1. Correct Spelling
             corrected = str(TextBlob(sentence).correct())
-            src_tokens = self._encode_text(corrected)[:MAX_LEN-2]
             
+            # 2. Prepare for AI
+            src_tokens = self._encode_text(corrected)[:MAX_LEN-2]
             sos_idx = self.word2idx.get("<sos>", 1)
             eos_idx = self.word2idx.get("<eos>", 2)
             pad_idx = self.word2idx.get("<pad>", 0)
@@ -93,6 +234,7 @@ class SymptomPredictor:
             src_tensor = torch.tensor([src_padded], dtype=torch.long).to(DEVICE)
             tgt_tensor = torch.tensor([[sos_idx]], dtype=torch.long).to(DEVICE)
             
+            # 3. Ask the Brain
             with torch.no_grad():
                 for _ in range(MAX_LEN):
                     output = self.model(src_tensor, tgt_tensor)
@@ -101,8 +243,19 @@ class SymptomPredictor:
                         break
                     tgt_tensor = torch.cat([tgt_tensor, torch.tensor([[next_token]], device=DEVICE)], dim=1)
 
-            prediction = " ".join([self.idx2word.get(idx, "") for idx in tgt_tensor[0].tolist()[1:]])
-            return {"original": sentence, "corrected": corrected, "diagnosis": prediction}
+            raw_prediction = " ".join([self.idx2word.get(idx, "") for idx in tgt_tensor[0].tolist()[1:]])
+            
+            # 4. Apply Hybrid Logic (Fix mistakes)
+            final_diagnosis = self._apply_medical_logic(corrected, raw_prediction)
+            
+            # 5. Make it Polite (Add advice)
+            polite_response = self._format_polite_response(final_diagnosis)
+
+            return {
+                "original": sentence,
+                "corrected": corrected,
+                "diagnosis": polite_response 
+            }
             
         except Exception as e:
             return {"error": str(e)}
