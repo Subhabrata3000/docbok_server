@@ -176,25 +176,94 @@ class SymptomPredictor:
     def _encode_text(self, text):
         return [self.word2idx.get(w, self.word2idx.get("<unk>", 0)) for w in text.lower().split()]
 
-    # --- HYBRID LOGIC LAYER (Fixes silly mistakes) ---
+    # --- 🧠 BALANCED LOGIC LAYER (Smarter, safer, less robot-like) ---
     def _apply_medical_logic(self, input_text, prediction):
         text = input_text.lower()
         pred = prediction.lower()
 
-        # 1. SPONDYLOSIS BLOCKER
-        if "spondylosis" in pred:
-            if any(x in text for x in ["fever", "cold", "flu", "shiver", "temperature"]):
-                return "viral fever"
-            if any(x in text for x in ["stomach", "pain", "vomit", "nausea", "abdomen"]):
-                return "stomach infection"
-            if any(x in text for x in ["skin", "rash", "itch", "yellow"]):
-                return "fungal infection" if "itch" in text else "jaundice"
+        # --------------------------------------------------
+        # 0. RED-FLAG OVERRIDES (Safety First)
+        # --------------------------------------------------
+        if any(x in text for x in ["chest pain", "severe breath", "unable to breathe"]):
+            return "bronchial asthma"
 
-        # 2. KEYWORD OVERRIDES
-        if "yellow" in text and "skin" in text: return "jaundice"
-        if "itch" in text or "rash" in text: return "fungal infection"
-        if "shiver" in text and "fever" in text: return "malaria"
-        
+        if any(x in text for x in ["unconscious", "faint", "seizure"]):
+            return "viral fever"
+
+        # --------------------------------------------------
+        # 1. SPONDYLOSIS SAFEGUARD (Fix obvious misfires)
+        # --------------------------------------------------
+        if "spondylosis" in pred:
+            if any(x in text for x in ["fever", "temperature", "chills"]):
+                return "viral fever"
+            if any(x in text for x in ["vomit", "nausea", "diarrhea", "loose motion"]):
+                return "stomach infection"
+            if "itch" in text and "rash" in text:
+                return "fungal infection"
+            if "breath" in text:
+                return "bronchial asthma"
+
+        # --------------------------------------------------
+        # 2. JAUNDICE LOGIC (Strict)
+        # --------------------------------------------------
+        if ("yellow" in text and "skin" in text) or ("yellow eyes" in text):
+            if any(x in text for x in ["urine", "dark urine", "fatigue", "abdominal pain"]):
+                return "jaundice"
+            # If ONLY yellow skin but no other confirmation, default to jaundice but keep it loose
+            return "jaundice"
+
+        # --------------------------------------------------
+        # 3. MALARIA vs VIRAL FEVER (Disambiguation)
+        # --------------------------------------------------
+        if "fever" in text:
+            if any(x in text for x in ["shiver", "chills", "sweating cycles"]):
+                return "malaria"
+            if any(x in text for x in ["body ache", "headache", "weakness"]):
+                return "viral fever"
+
+        # --------------------------------------------------
+        # 4. DENGUE CHECK (High Risk)
+        # --------------------------------------------------
+        if "fever" in text and any(x in text for x in ["platelet", "joint pain", "eye pain"]):
+            return "dengue"
+
+        # --------------------------------------------------
+        # 5. ASTHMA vs INFECTION
+        # --------------------------------------------------
+        if any(x in text for x in ["breath", "wheezing", "tight chest"]):
+            if "fever" not in text:
+                return "bronchial asthma"
+
+        # --------------------------------------------------
+        # 6. STOMACH ISSUES (Layered)
+        # --------------------------------------------------
+        if any(x in text for x in ["vomit", "nausea", "loose motion", "diarrhea"]):
+            if "fever" in text:
+                return "stomach infection"
+            return "food poisoning"
+
+        # --------------------------------------------------
+        # 7. HEADACHE LOGIC (Migraine vs Fever)
+        # --------------------------------------------------
+        if "headache" in text:
+            if any(x in text for x in ["light", "noise", "dark room", "throbbing"]):
+                return "migraine"
+            if "fever" in text:
+                return "viral fever"
+
+        # --------------------------------------------------
+        # 8. JOINT & MUSCLE LOGIC
+        # --------------------------------------------------
+        if any(x in text for x in ["joint pain", "swelling", "stiffness"]):
+            if "morning" in text or "chronic" in text:
+                return "arthritis"
+            if "fever" in text:
+                return "viral fever"
+
+        # --------------------------------------------------
+        # 9. FALLBACK PROTECTION
+        # --------------------------------------------------
+        # If model is unsure or user input is vague, trust model
         return prediction
 
     # --- 🗣️ CONVERSATIONAL LAYER (Makes it polite) ---
